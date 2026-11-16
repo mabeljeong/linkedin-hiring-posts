@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.venv/
+.env
+debug/
+logs/
+
+# Personal / local-only
+companies.json
+state/
+.github/
