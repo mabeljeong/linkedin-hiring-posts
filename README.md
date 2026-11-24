@@ -7,7 +7,7 @@ those posts automatically. Twice a day it searches LinkedIn posts for data and
 AI hiring announcements, filters out the noise, and emails a digest of new ones.
 
 ```
-[Hiring Posts] 38 new LinkedIn post(s)
+[Hiring Posts] 13 new LinkedIn post(s)
 
 == Mastercard (1) ==
 - Jane Doe (Senior Talent Acquisition Specialist @ Mastercard | 2d | US)
@@ -15,7 +15,7 @@ AI hiring announcements, filters out the noise, and emails a digest of new ones.
   Post: https://lnkd.in/p/…
   Job:  https://www.linkedin.com/jobs/view/…
 
-== General search (29) ==
+== Hiring managers (12) ==
 - John Smith (Sr. Data Science Manager at PlayStation | 11h | US)
   I'm hiring a Data Science Manager to join my team…
 ```
@@ -34,9 +34,9 @@ Task Scheduler (6am / 1pm)
             ├─ scraper.py   real Chrome + saved login profile
             │                 → Posts search (past week, latest first)
             │                 → read post cards from the page
-            ├─ filters      person-posted? hiring for a target company?
-            │               job seeker / staffing / ad? US-based?
-            ├─ dedup        3 fingerprints per post vs state/seen_posts.json
+            ├─ filters      person-posted? really hiring for a data/AI role?
+            │               gig work / agency / job list? target company? US-based?
+            ├─ dedup        fingerprints per post vs state/seen_posts.json
             ├─ notify.py    HTML + plain-text email digest (Gmail SMTP)
             └─ state        save everything seen, only after the email is sent
 ```
@@ -48,8 +48,9 @@ Task Scheduler (6am / 1pm)
 ("Stripe" OR "Airbnb" OR "Netflix" OR "Spotify") hiring ("machine learning" OR "evals" OR "AI quality")
 ```
 
-Three generic searches also run every time, such as
-`hiring ("data engineer" OR "data scientist") "my team"`. Data searches run in
+Six generic searches also run every time, such as
+`"I'm hiring" ("data scientist" OR "data engineer" OR …)`. They use first-person
+phrases ("my team", "I'm hiring") because that is how hiring managers write. Data searches run in
 the morning and AI searches in the afternoon. Every search covers the past week,
 so alternating halves the load without missing anything.
 
@@ -57,7 +58,11 @@ so alternating halves the load without missing anything.
 
 - It's posted by a person (`/in/` profile), not a company page or job board.
 - It's not a job seeker ("open to work", "immediate joiner", "I was laid off").
-- It's not contract staffing (C2C/W2, bench sales) or an ad.
+- It's not contract staffing (C2C/W2, bench sales), an agency, or an ad.
+- It announces a target role: a hiring phrase ("my team is hiring") and a title
+  from `TARGET_ROLES` in `relevance.py` appear close together.
+- It's not gig work (annotation, AI trainer, hourly Mercor referrals) or a list
+  of other companies' jobs.
 - For company searches, the author's headline names the company, or the post
   is about hiring for it ("my team at X", "X is hiring"). A passing mention,
   such as "5 years of X experience", doesn't count.
@@ -73,10 +78,11 @@ Making this reliable meant working around several undocumented behaviors.
 | Session cookie got revoked | A pasted `li_at` cookie used from a headless browser was invalidated within minutes | Use a real Chrome **persistent profile** with a one-time manual login (`--login`) |
 | Searches silently returned 0 | Posts search returns nothing once a query has **more than 7 OR'd quoted terms**: 7 works, 8 and 9 return 0 | Groups of 4 companies + 3 role terms, plus `validate_queries()` to fail fast at startup |
 | No post IDs in the page | The new search page uses generated class names and has no post URNs in its markup or component data | Read posts through stable hooks (`role="listitem"`, the "Open control menu for post by…" label, `data-testid="expandable-text-box"`). Get the real link with "Copy link to post" via the clipboard, **only for posts that will be emailed** |
-| Duplicate emails | Without IDs, edits or a shifting "…more" cut-off change a post's text | 3 fingerprints per post (author + opening, profile + first 80 chars, profile + attached job). Any match counts as seen |
+| Duplicate emails | Without IDs, edits or a shifting "…more" cut-off change a post's text | Fingerprints per post (author + opening, profile + first 80 chars, profile + attached job), plus the post link once copied. Any match counts as seen |
 | Bot checks | Company pages showed a "Just a moment…" challenge | Only search pages are used. Random 20–45 s pauses and human-like scrolling |
 | Laptop sleep froze a run | A frozen run held the Chrome profile lock, so the next run crashed silently | `flock`, a 45-minute `timeout`, stale-lock cleanup, and alert emails on crash or timeout |
-| Busy searches truncated | Only the first page of results was read | Keep scrolling while new posts load (up to 100) |
+| Busy searches truncated | Only the first page was read: results scroll inside `<main>`, and the mouse sat over the header, so the wheel did nothing | Move the mouse over the results and scroll the last post into view (up to 6 scrolls) |
+| Irrelevant results | Search matches words anywhere in a post, so "hiring" + "AI quality" found thought pieces and gig referrals | First-person queries, plus `relevance.py`. The log shows why posts were skipped |
 
 ## Setup
 
@@ -146,6 +152,7 @@ as possible after a scheduled start is missed".
 main.py       orchestration: searches, filters, dedup, email, state
 scraper.py    browser session, search, post extraction, filters
 config.py     queries, 7-term validation, company list loading
+relevance.py  is it really a data/AI hiring post? (edit TARGET_ROLES here)
 location.py   US / non-US classification from free text
 notify.py     email digest and alerts
 run.sh        scheduler entry point: lock, timeout, alerts

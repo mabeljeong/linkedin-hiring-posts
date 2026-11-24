@@ -15,6 +15,7 @@ from email.message import EmailMessage
 from html import escape
 from typing import Iterable
 
+from relevance import is_hiring_manager
 from scraper import Post
 
 SMTP_HOST = "smtp.gmail.com"
@@ -59,15 +60,15 @@ def _snippet(text: str) -> str:
 
 
 def _group(posts: list[Post]) -> list[tuple[str, list[Post]]]:
-    """Target companies first (alphabetical), then the generic searches."""
+    """Target companies first (alphabetical), then generic results from people
+    hiring for their own team, then other generic results. US posts come first."""
+    last = ("Hiring managers", "Recruiters and others")
     groups: dict[str, list[Post]] = {}
     for p in posts:
-        key = p.company if p.section == "company" else "General search"
+        key = p.company if p.section == "company" else last[0 if is_hiring_manager(p) else 1]
         groups.setdefault(key, []).append(p)
-    ordered = sorted(k for k in groups if k != "General search")
-    if "General search" in groups:
-        ordered.append("General search")
-    return [(k, groups[k]) for k in ordered]
+    ordered = sorted(k for k in groups if k not in last) + [k for k in last if k in groups]
+    return [(k, sorted(groups[k], key=lambda p: p.region != "us")) for k in ordered]
 
 
 def _format_body(posts: list[Post]) -> tuple[str, str]:

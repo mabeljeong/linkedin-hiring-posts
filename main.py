@@ -17,6 +17,7 @@ import json
 import os
 import random
 import sys
+from collections import Counter
 from datetime import datetime
 import traceback
 from dataclasses import replace
@@ -24,6 +25,7 @@ from pathlib import Path
 
 from config import COMPANY_QUERY_TEMPLATES, GENERIC_QUERIES, company_batches, company_keyword, validate_queries
 from location import classify_location
+from relevance import reject_reason
 from notify import MissingCredentialsError, send_alert_email, send_new_posts_email
 from scraper import (
     NotAuthenticatedError,
@@ -107,19 +109,30 @@ def collect_posts(
         if n > 1:
             _pause(page)
 
-        def select(p: Post, batch=batch) -> Post | None:
+        stats: Counter[str] = Counter()
+
+        def select(p: Post, batch=batch, stats=stats) -> Post | None:
+            stats["read"] += 1
             keys = p.dedup_keys
             if any(k in seen_ids or k in run_keys for k in keys):
+                stats["already seen"] += 1
                 return None
             if not is_person_post(p) or is_promoted(p) or is_job_seeker(p) or is_staffing(p):
+                stats["company page/ad/job seeker/staffing"] += 1
+                return None
+            reason = reject_reason(p)
+            if reason:
+                stats[reason] += 1
                 return None
             region = classify_location(f"{p.headline} {p.card_text}")
             if not _region_allowed(region):
+                stats["non-US"] += 1
                 return None
             company = ""
             if batch:
                 company = next((name for name, aliases in batch.items() if works_at_or_hiring_for(p, aliases)), "")
                 if not company:
+                    stats["not a target company"] += 1
                     return None
             return replace(p, company=company, region=region)
 
@@ -132,10 +145,22 @@ def collect_posts(
             continue
 
         all_ids.update(ids)
+        sent = 0
         for p in kept:
+            # The link identifies a post even if its text changed since last time.
+            keys = p.dedup_keys + p.link_keys
+            if any(k in seen_ids or k in run_keys for k in keys):
+                stats["already seen"] += 1
+                all_ids.update(keys)
+                continue
             found[p.post_id] = p
-            run_keys.update(p.dedup_keys)
-        print(f"[{n}/{len(searches)} {tag}] {len(ids):>3} posts, {len(kept):>3} new + matched")
+            run_keys.update(keys)
+            all_ids.update(keys)
+            sent += 1
+        read = stats.pop("read", 0)
+        skipped = ", ".join(f"{v} {k}" for k, v in stats.most_common())
+        print(f"[{n}/{len(searches)} {tag}] {read:>3} posts, {sent:>3} new + matched"
+              f"{' (skipped: ' + skipped + ')' if skipped else ''}")
 
     return all_ids, list(found.values())
 
@@ -193,7 +218,7 @@ def run(
                 )
             return 1
 
-    print(f"[scrape] {len(all_ids)} unique posts seen, {len(new_posts)} new after company/US filters")
+    print(f"[scrape] {len(new_posts)} new posts after all filters")
     for p in new_posts:
         tag = p.company or "generic"
         print(f"  + [{tag}|{p.region}] {p.author} | {p.headline[:60]}\n      {p.url}")

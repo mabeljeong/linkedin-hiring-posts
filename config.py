@@ -10,10 +10,16 @@ import re
 from pathlib import Path
 
 # Requirement 1: generic searches (no company filter), past week, latest first.
+# Hiring managers write in the first person ("my team", "I'm hiring"); searches
+# without such a phrase mostly return thought pieces, agencies, and gig work.
+_ROLES = '("data scientist" OR "data engineer" OR "analytics engineer" OR "machine learning engineer")'
 GENERIC_QUERIES: tuple[str, ...] = (
     'hiring ("data engineer" OR "data scientist") "my team"',
-    '"we\'re hiring" "analytics engineer"',
-    'hiring ("evals" OR "AI quality") data',
+    f'"I\'m hiring" {_ROLES}',
+    f'"join my team" {_ROLES}',
+    f'"my team is hiring" {_ROLES}',
+    'hiring ("machine learning engineer" OR "applied scientist" OR "AI engineer") "my team"',
+    'hiring ("evals" OR "LLM evaluation" OR "AI quality") "my team"',
 )
 
 # Requirement 2: searches over batches of target companies. `{company}` expands
@@ -24,7 +30,7 @@ GENERIC_QUERIES: tuple[str, ...] = (
 # batch size + role terms must stay within it. validate_queries() enforces this.
 #
 # The "data" and "ai" searches alternate between runs (see main.py --part):
-# each run is 13 company searches + 3 generic instead of 29, and since every
+# each run is 13 company searches + 6 generic instead of 32, and since every
 # search covers the past week, running each type once a day misses nothing.
 MAX_QUERY_TERMS = 7
 COMPANY_BATCH_SIZE = 4
