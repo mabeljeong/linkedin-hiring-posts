@@ -64,8 +64,17 @@ NON_US_PLACES = (
     "Auckland", "Brazil", "São Paulo", "Sao Paulo", "Mexico City",
     "Guadalajara", "Argentina", "Buenos Aires", "Colombia", "Bogotá",
     "Bogota", "Medellín", "Medellin", "Chile", "Santiago", "Costa Rica",
-    "Pakistan", "Karachi", "Lahore", "Bangladesh", "Dhaka", "Sri Lanka",
+    "Europe", "European", "Eindhoven", "Pekanbaru", "Uzbekistan", "Kazakhstan", "Kuala Lumpur", "LatAm",
+    "Oslo", "Helsinki", "Vienna", "Austria", "Münster", "Cologne", "Luxembourg",
+    "Greece", "Athens", "Serbia", "Belgrade", "Bulgaria", "Sofia", "Turkey", "Istanbul",
+    "Qatar", "Doha", "Kuwait", "Bahrain", "Oman", "Jordan", "Ghana", "Accra",
+    "Jaipur", "Indore", "Coimbatore", "Kochi", "Trivandrum", "Thane", "Vadodara",
+    "Islamabad", "Pakistan", "Karachi", "Lahore", "Bangladesh", "Dhaka", "Sri Lanka",
 )
+# Pay and hiring terms only used outside the US.
+NON_US_TERMS_RE = re.compile(r"[₹€£]|[а-яА-Я]{4}|\bLPA\b|\blakhs?\b|\bCTC\b|\bnotice period\b|\bINR\b", re.I)
+# "JOIN US" / "with US" in capitals is a pronoun, not a country.
+PRONOUN_US_RE = re.compile(r"\b(?:JOIN|WITH|CONTACT|ABOUT|TO|FOR|FOLLOW|WORK WITH) US\b")
 NON_US_TOKENS_CS = ("UK", "UAE", "EMEA", "APAC", "LATAM", "EU", "ANZ")
 
 
@@ -83,8 +92,19 @@ _MEXICO_RE = re.compile(r"(?<!New )(?<![A-Za-z])Mexico(?![A-Za-z])", re.I)
 
 
 def classify_location(text: str) -> str:
-    if _US_RE.search(text) or _US_CS_RE.search(text) or US_STATE_ABBREV_RE.search(text):
+    text = PRONOUN_US_RE.sub(" ", text)
+    # A stated "Location: ..." beats places mentioned elsewhere in the post.
+    stated = re.search(r"(?:\blocations?\b\s*[:\-–|]+|\bcandidates based in\b)\s*(.{3,60}?)(?:[.;|•]|$)", text, re.I)
+    if stated:
+        region = classify_location(stated.group(1))
+        if region != "unknown":
+            return region
+    non_us = bool(_NON_US_RE.search(text) or _NON_US_CS_RE.search(text) or _MEXICO_RE.search(text))
+    if _US_RE.search(text) or _US_CS_RE.search(text):
         return "us"
-    if _NON_US_RE.search(text) or _NON_US_CS_RE.search(text) or _MEXICO_RE.search(text):
+    # ", IN" / ", DE" are also country codes, so they don't outweigh a named foreign city.
+    if US_STATE_ABBREV_RE.search(text) and not non_us:
+        return "us"
+    if non_us or NON_US_TERMS_RE.search(text):
         return "non-us"
     return "unknown"

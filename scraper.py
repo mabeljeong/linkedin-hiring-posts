@@ -22,7 +22,7 @@ from playwright.sync_api import Error as PlaywrightError, Page, TimeoutError as 
 from playwright_stealth import Stealth
 
 SEARCH_BASE = "https://www.linkedin.com/search/results/content/"
-MAX_SCROLLS = int(os.environ.get("LINKEDIN_MAX_SCROLLS", "12"))
+MAX_SCROLLS = int(os.environ.get("LINKEDIN_MAX_SCROLLS", "6"))
 MAX_RESULTS_PER_QUERY = int(os.environ.get("LINKEDIN_MAX_RESULTS", "100"))
 DEBUG_DIR = os.environ.get("DEBUG_DIR", "").strip()
 
@@ -68,6 +68,11 @@ class Post:
             # Same author + same attached job = same announcement.
             keys.append("j:" + hashlib.sha1(f"{who}|{self.job_url}".encode("utf-8")).hexdigest()[:16])
         return keys
+
+    @property
+    def link_keys(self) -> list[str]:
+        """Dedup key from the copied post link, if there is one."""
+        return ["l:" + hashlib.sha1(self.link.encode("utf-8")).hexdigest()[:16]] if self.link else []
 
     @property
     def url(self) -> str:
@@ -257,6 +262,18 @@ def _copy_post_link(page: Page, index: int) -> str:
     return link.strip() if link.strip().startswith("http") else ""
 
 
+def _scroll_results(page: Page) -> None:
+    """Scroll to the end of the loaded posts. The results scroll inside <main>,
+    not the window, so the wheel does nothing unless the mouse is over them."""
+    try:
+        page.mouse.move(random.randint(560, 760), random.randint(400, 600))
+        if page.locator(CARD).count():
+            page.locator(CARD).last.scroll_into_view_if_needed(timeout=5000)
+        page.mouse.wheel(0, random.randint(2500, 3500))
+    except PlaywrightError as exc:
+        print(f"[linkedin] Scroll failed: {str(exc).splitlines()[0]}")
+
+
 def search_posts(
     page: Page,
     keywords: str,
@@ -280,8 +297,8 @@ def search_posts(
     # Scroll while new posts keep loading; stop after two scrolls with nothing new.
     count, stale = page.locator(CARD).count(), 0
     for _ in range(MAX_SCROLLS):
-        page.mouse.wheel(0, random.randint(1200, 2000))
-        page.wait_for_timeout(random.randint(1500, 2600))
+        _scroll_results(page)
+        page.wait_for_timeout(random.randint(2000, 3200))
         new_count = page.locator(CARD).count()
         stale = stale + 1 if new_count == count else 0
         count = new_count
@@ -328,7 +345,13 @@ JOB_SEEKER_RE = re.compile(
 
 
 def _alias_re(alias: str) -> str:
-    return rf"(?<![A-Za-z0-9]){re.escape(alias)}(?![A-Za-z0-9])"
+    """Matches a company name as written or in capitals. Case matters because
+    many names are ordinary words (Block, Square, Visa, Modular), and "Visa
+    sponsorship" or "Visa: H1B" isn't the company."""
+    names = "|".join(re.escape(a) for a in dict.fromkeys((alias, alias.upper())))
+    not_visa = r"(?!\s*(?:[:/–-]|(?i:sponsor|status|transfer|holder|type|require|support|candidate|independent)))" \
+        if alias.lower() == "visa" else ""
+    return rf"(?<![A-Za-z0-9])(?:{names})(?![A-Za-z0-9]){not_visa}"
 
 
 def works_at_or_hiring_for(post: Post, aliases: tuple[str, ...]) -> bool:
@@ -337,9 +360,9 @@ def works_at_or_hiring_for(post: Post, aliases: tuple[str, ...]) -> bool:
     (e.g. "5 years of PayPal experience") doesn't count."""
     for alias in aliases:
         a = _alias_re(alias)
-        if re.search(a, post.headline, re.I):
+        if re.search(a, post.headline):
             return True
-        if re.search(rf"{HIRING_CONTEXT}\b.{{0,40}}{a}|{a}.{{0,25}}\b(?:is |are )?hiring", post.text, re.I):
+        if re.search(rf"(?i:{HIRING_CONTEXT})\b.{{0,40}}{a}|{a}.{{0,25}}\b(?i:(?:is |are )?hiring)", post.text):
             return True
     return False
 
